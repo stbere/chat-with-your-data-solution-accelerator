@@ -1,34 +1,20 @@
 import streamlit as st
 import os
-import json
 import traceback
-import logging
-import pandas as pd
 import sys
-from batch.utilities.helpers.AzureSearchHelper import AzureSearchHelper
-from dotenv import load_dotenv
+import pandas as pd
+from batch.utilities.helpers.env_helper import EnvHelper
+from batch.utilities.search.search import Search
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+env_helper: EnvHelper = EnvHelper()
 
-load_dotenv()
-
-logger = logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
-    logging.WARNING
-)
 st.set_page_config(
     page_title="Explore Data",
     page_icon=os.path.join("images", "favicon.ico"),
     layout="wide",
     menu_items=None,
 )
-mod_page_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            </style>
-            """
-st.markdown(mod_page_style, unsafe_allow_html=True)
 
 # CSS to inject contained in a string
 hide_table_row_index = """
@@ -42,23 +28,25 @@ hide_table_row_index = """
 st.markdown(hide_table_row_index, unsafe_allow_html=True)
 
 
+def load_css(file_path):
+    with open(file_path) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
+# Load the common CSS
+load_css("pages/common.css")
+
+
 try:
-    vector_store_helper: AzureSearchHelper = AzureSearchHelper()
-    search_client = vector_store_helper.get_vector_store().client
-    # get unique document names by getting facets for title field
-    results = search_client.search("*", facets=["title"])
-    unique_files = [filename["value"] for filename in results.get_facets()["title"]]
+    search_handler = Search.get_search_handler(env_helper)
+
+    results = search_handler.search_with_facets("*", "title", facet_count=0)
+    unique_files = search_handler.get_unique_files(results, "title")
     filename = st.selectbox("Select your file:", unique_files)
     st.write("Showing chunks for:", filename)
 
-    results = search_client.search(
-        "*", select="title, content, metadata", filter=f"title eq '{filename}'"
-    )
-
-    data = [
-        [json.loads(result["metadata"])["chunk"], result["content"]]
-        for result in results
-    ]
+    results = search_handler.perform_search(filename)
+    data = search_handler.process_results(results)
     df = pd.DataFrame(data, columns=("Chunk", "Content")).sort_values(by=["Chunk"])
     st.table(df)
 

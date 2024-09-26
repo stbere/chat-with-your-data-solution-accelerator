@@ -1,32 +1,32 @@
 import streamlit as st
 import os
 import traceback
-import logging
 import sys
-from batch.utilities.helpers.AzureSearchHelper import AzureSearchHelper
-from dotenv import load_dotenv
+import logging
+from batch.utilities.helpers.env_helper import EnvHelper
+from batch.utilities.search.search import Search
+from batch.utilities.helpers.azure_blob_storage_client import AzureBlobStorageClient
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+env_helper: EnvHelper = EnvHelper()
+logger = logging.getLogger(__name__)
 
-load_dotenv()
-
-logger = logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
-    logging.WARNING
-)
 st.set_page_config(
     page_title="Delete Data",
     page_icon=os.path.join("images", "favicon.ico"),
     layout="wide",
     menu_items=None,
 )
-mod_page_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            </style>
-            """
-st.markdown(mod_page_style, unsafe_allow_html=True)
+
+
+def load_css(file_path):
+    with open(file_path) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
+# Load the common CSS
+load_css("pages/common.css")
+
 
 # CSS to inject contained in a string
 hide_table_row_index = """
@@ -39,59 +39,46 @@ hide_table_row_index = """
 # Inject CSS with Markdown
 st.markdown(hide_table_row_index, unsafe_allow_html=True)
 
+try:
+    # Initialize session state for selected files
+    if "selected_files" not in st.session_state:
+        st.session_state.selected_files = {}
 
-def get_files():
-    return search_client.search("*", select="id, title", include_total_count=True)
-
-
-def output_results(results):
-    files = {}
-    if results.get_count() == 0:
+    search_handler = Search.get_search_handler(env_helper)
+    results = search_handler.get_files()
+    if results is None or results.get_count() == 0:
         st.info("No files to delete")
         st.stop()
     else:
         st.write("Select files to delete:")
 
-    for result in results:
-        id = result["id"]
-        filename = result["title"]
-        if filename in files:
-            files[filename].append(id)
-        else:
-            files[filename] = [id]
-            st.checkbox(filename, False, key=filename)
+    files = search_handler.output_results(results)
+    with st.form("delete_form", clear_on_submit=True, border=False):
+        selections = {
+            filename: st.checkbox(filename, False, key=filename)
+            for filename in files.keys()
+        }
+        selected_files = {
+            filename: ids for filename, ids in files.items() if selections[filename]
+        }
 
-    return files
-
-
-def delete_files(files):
-    ids_to_delete = []
-    files_to_delete = []
-
-    for filename, ids in files.items():
-        if st.session_state[filename]:
-            files_to_delete.append(filename)
-            ids_to_delete += [{"id": id} for id in ids]
-
-    if len(ids_to_delete) == 0:
-        st.info("No files selected")
-        st.stop()
-
-    search_client.delete_documents(ids_to_delete)
-
-    st.success("Deleted files: " + str(files_to_delete))
-
-
-try:
-    vector_store_helper: AzureSearchHelper = AzureSearchHelper()
-    search_client = vector_store_helper.get_vector_store().client
-
-    results = get_files()
-    files = output_results(results)
-
-    if st.button("Delete"):
-        with st.spinner("Deleting files..."):
-            delete_files(files)
-
+        if st.form_submit_button("Delete"):
+            with st.spinner("Deleting files..."):
+                if len(selected_files) == 0:
+                    st.info("No files selected")
+                    st.stop()
+                else:
+                    files_to_delete = search_handler.delete_files(
+                        selected_files,
+                    )
+                    blob_client = AzureBlobStorageClient()
+                    blob_client.delete_files(
+                        selected_files,
+                        env_helper.AZURE_SEARCH_USE_INTEGRATED_VECTORIZATION,
+                    )
+                    if len(files_to_delete) > 0:
+                        st.success("Deleted files: " + str(files_to_delete))
+                        st.rerun()
 except Exception:
-    st.error(traceback.format_exc())
+    logger.error(traceback.format_exc())
+    st.error("Exception occurred deleting files.")

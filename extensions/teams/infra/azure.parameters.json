@@ -11,11 +11,14 @@
     "botAadAppClientSecret": {
       "value": "${{SECRET_BOT_PASSWORD}}"
     },
+    "azureFunctionURL": {
+      "value": "${{AZURE_FUNCTION_URL}}"
+    },
     "webAppSKU": {
       "value": "B1"
     },
     "botDisplayName": {
-      "value": "cwyod_ts"
+      "value": "teams-bot-toolkit"
     }
   }
 }

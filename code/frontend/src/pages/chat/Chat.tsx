@@ -6,8 +6,6 @@ import {
   SquareRegular,
 } from "@fluentui/react-icons";
 import {
-  SpeechConfig,
-  AudioConfig,
   SpeechRecognizer,
   ResultReason,
 } from "microsoft-cognitiveservices-speech-sdk";
@@ -18,24 +16,28 @@ import { v4 as uuidv4 } from "uuid";
 
 import styles from "./Chat.module.css";
 import Azure from "../../assets/Azure.svg";
+import { multiLingualSpeechRecognizer } from "../../util/SpeechToText";
 
 import {
   ChatMessage,
   ConversationRequest,
-  conversationApi,
-  customConversationApi,
+  callConversationApi,
   Citation,
   ToolMessageContent,
   ChatResponse,
+  getAssistantTypeApi,
 } from "../../api";
 import { Answer } from "../../components/Answer";
 import { QuestionInput } from "../../components/QuestionInput";
+import Cards from "./Cards_contract/Cards";
 
 const Chat = () => {
   const lastQuestionRef = useRef<string>("");
   const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [showLoadingMessage, setShowLoadingMessage] = useState<boolean>(false);
+
+  const [isSendButtonDisabled, setSendButtonDisabled] = useState(false);
   const [activeCitation, setActiveCitation] =
     useState<
       [
@@ -57,8 +59,10 @@ const Chat = () => {
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const recognizerRef = useRef<SpeechRecognizer | null>(null);
-  const [subscriptionKey, setSubscriptionKey] = useState<string>("");
-  const [serviceRegion, setServiceRegion] = useState<string>("");
+  const [assistantType, setAssistantType] = useState("");
+  const [activeCardIndex, setActiveCardIndex] = useState<number | null>(null);
+  const [isTextToSpeachActive , setIsTextToSpeachActive] = useState(false);
+
   const makeApiRequest = async (question: string) => {
     lastQuestionRef.current = question;
 
@@ -79,7 +83,7 @@ const Chat = () => {
 
     let result = {} as ChatResponse;
     try {
-      const response = await customConversationApi(
+      const response = await callConversationApi(
         request,
         abortController.signal
       );
@@ -111,17 +115,19 @@ const Chat = () => {
                 ]);
               }
               runningText = "";
-            } catch {}
+            } catch { }
           });
         }
         setAnswers([...answers, userMessage, ...result.choices[0].messages]);
       }
     } catch (e) {
       if (!abortController.signal.aborted) {
-        console.error(result);
-        alert(
-          "An error occurred. Please try again. If the problem persists, please contact the site administrator."
-        );
+        if (e instanceof Error) {
+          alert(e.message);
+        }
+        else {
+          alert('An error occurred. Please try again. If the problem persists, please contact the site administrator.');
+        }
       }
       setAnswers([...answers, userMessage]);
     } finally {
@@ -134,63 +140,40 @@ const Chat = () => {
 
     return abortController.abort();
   };
+  // Buffer to store recognized text
+  let recognizedTextBuffer = "";
+  let currentSentence = "";
 
-  useEffect(() => {
-    async function fetchServerConfig() {
-      try {
-        const response = await fetch("/api/config");
-        if (!response.ok) {
-          throw new Error("Network response was not ok");
-        }
-        const data = await response.json();
-        const fetchedSubscriptionKey = data.azureSpeechKey;
-        const fetchedServiceRegion = data.azureSpeechRegion;
-
-        setSubscriptionKey(fetchedSubscriptionKey);
-        setServiceRegion(fetchedServiceRegion);
-      } catch (error) {
-        console.error("Error fetching server configuration:", error);
-      }
-    }
-
-    fetchServerConfig();
-  }, []);
-
-  const startSpeechRecognition = (
-    subscriptionKey: string,
-    serviceRegion: string
-  ) => {
+  const startSpeechRecognition = async () => {
     if (!isRecognizing) {
       setIsRecognizing(true);
+      recognizerRef.current = await multiLingualSpeechRecognizer(); // Store the recognizer in the ref
 
-      if (!subscriptionKey || !serviceRegion) {
-        console.error(
-          "Azure Speech subscription key or region is not defined."
-        );
-      } else {
-        const speechConfig = SpeechConfig.fromSubscription(
-          subscriptionKey,
-          serviceRegion
-        );
-        const audioConfig = AudioConfig.fromDefaultMicrophoneInput();
-        const recognizer = new SpeechRecognizer(speechConfig, audioConfig);
-        recognizerRef.current = recognizer; // Store the recognizer in the ref
-
-        recognizerRef.current.recognized = (s, e) => {
-          if (e.result.reason === ResultReason.RecognizedSpeech) {
-            const recognized = e.result.text;
-            // console.log("Recognized:", recognized);
-            setUserMessage(recognized);
-            setRecognizedText(recognized);
+      recognizerRef.current.recognized = (s, e) => {
+        if (e.result.reason === ResultReason.RecognizedSpeech) {
+          let recognizedText = e.result.text.trim();
+          // Append current sentence to buffer if it's not empty
+          if (currentSentence) {
+            recognizedTextBuffer += ` ${currentSentence.trim()}`;
+            currentSentence = "";
           }
-        };
+          // Start new sentence
+          currentSentence += ` ${recognizedText}`;
+          //set text in textarea
+          setUserMessage((recognizedTextBuffer + currentSentence).trim());
+          setRecognizedText((recognizedTextBuffer + currentSentence).trim());
+        }
+      };
 
-        recognizerRef.current.startContinuousRecognitionAsync(() => {
+      recognizerRef.current.startContinuousRecognitionAsync(
+        () => {
           setIsRecognizing(true);
-          // console.log("Speech recognition started.");
           setIsListening(true);
-        });
-      }
+        },
+        error => {
+          console.error(`Error starting recognition: ${error}`);
+        }
+      );
     }
   };
 
@@ -205,16 +188,19 @@ const Chat = () => {
       }
       setIsRecognizing(false);
       setRecognizedText("");
+      setSendButtonDisabled(false);
       setIsListening(false);
     }
   };
 
-  const onMicrophoneClick = () => {
+  const onMicrophoneClick = async () => {
+    // clear the previous text
+    setUserMessage("");
+    setRecognizedText("");
     if (!isRecognizing) {
-      // console.log("Starting speech recognition...");
-      startSpeechRecognition(subscriptionKey, serviceRegion);
+      setSendButtonDisabled(true);
+      await startSpeechRecognition();
     } else {
-      // console.log("Stopping speech recognition...");
       stopSpeechRecognition();
       setRecognizedText(userMessage);
     }
@@ -234,7 +220,22 @@ const Chat = () => {
   };
 
   useEffect(
-    () => chatMessageStreamEnd.current?.scrollIntoView({ behavior: "smooth" }),
+    () => {
+      chatMessageStreamEnd.current?.scrollIntoView({ behavior: "smooth" })
+      const fetchAssistantType = async () => {
+        try {
+          const result = await getAssistantTypeApi();
+          if (result) {
+            setAssistantType(result.ai_assistant_type);
+          }
+          return result;
+        } catch (error) {
+          console.error('Error fetching assistant type:', error);
+        }
+      };
+      fetchAssistantType();
+    },
+
     [showLoadingMessage]
   );
 
@@ -262,17 +263,38 @@ const Chat = () => {
     return [];
   };
 
+  const handleSpeech = (index: number, status : string) => {
+    if(status != 'pause')
+    setActiveCardIndex(index);
+    setIsTextToSpeachActive(status =='speak' ? true : false)
+  };
+
+
   return (
     <div className={styles.container}>
-      <Stack horizontal className={styles.chatRoot}>
+      <Stack horizontal className={styles.chatRoot} >
+
         <div className={`${styles.chatContainer} ${styles.MobileChatContainer}`}>
           {!lastQuestionRef.current ? (
             <Stack className={styles.chatEmptyState}>
-              <img src={Azure} className={styles.chatIcon} aria-hidden="true" />
-              <h1 className={styles.chatEmptyStateTitle}>Start chatting</h1>
-              <h2 className={styles.chatEmptyStateSubtitle}>
-                This chatbot is configured to answer your questions
-              </h2>
+              <img src={Azure} className={styles.chatIcon} aria-hidden="true" alt="Azure AI logo" />
+              {assistantType === 'contract assistant' ? (
+                <>
+                  <h1 className={styles.chatEmptyStateTitle}>Contract Summarizer</h1>
+                  <h2 className={styles.chatEmptyStateSubtitle}>AI-Powered assistant for simplified summarization</h2>
+                  <Cards />
+                </>
+              ) : assistantType === 'default' ? (
+                <>
+                  <h1 className={styles.chatEmptyStateTitle}>Start chatting</h1>
+                  <h2 className={styles.chatEmptyStateSubtitle}>This chatbot is configured to answer your questions</h2>
+                </>
+              ) : <div className={styles.loadingContainer}>
+                <div className={styles.loadingIcon}></div>
+                <p>Loading...</p>
+              </div>}
+
+
             </Stack>
           ) : (
             <div
@@ -295,12 +317,14 @@ const Chat = () => {
                             answer.role === "assistant"
                               ? answer.content
                               : "Sorry, an error occurred. Try refreshing the conversation or waiting a few minutes. If the issue persists, contact your system administrator. Error: " +
-                                answer.content,
+                              answer.content,
                           citations:
                             answer.role === "assistant"
                               ? parseCitationFromMessage(answers[index - 1])
                               : [],
                         }}
+                        onSpeak={handleSpeech}
+                        isActive={activeCardIndex === index}
                         onCitationClicked={(c) => onShowCitation(c)}
                         index={index}
                       />
@@ -380,11 +404,13 @@ const Chat = () => {
               disabled={isLoading}
               onSend={(question) => makeApiRequest(question)}
               recognizedText={recognizedText}
+              isSendButtonDisabled={isSendButtonDisabled}
               onMicrophoneClick={onMicrophoneClick}
               onStopClick={stopSpeechRecognition}
               isListening={isListening}
               isRecognizing={isRecognizing}
               setRecognizedText={setRecognizedText}
+              isTextToSpeachActive = {isTextToSpeachActive}
             />
           </Stack>
         </div>
@@ -403,6 +429,7 @@ const Chat = () => {
               />
             </Stack>
             <h5 className={`${styles.citationPanelTitle} ${styles.mobileCitationPanelTitle}`}>{activeCitation[2]}</h5>
+            <div className={`${styles.citationPanelDisclaimer} ${styles.mobileCitationPanelDisclaimer}`}>Tables, images, and other special formatting not shown in this preview. Please follow the link to review the original document.</div>
             <ReactMarkdown
               className={`${styles.citationPanelContent} ${styles.mobileCitationPanelContent}`}
               children={activeCitation[0]}
@@ -414,6 +441,7 @@ const Chat = () => {
       </Stack>
     </div>
   );
+
 };
 
 export default Chat;

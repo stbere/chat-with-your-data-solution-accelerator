@@ -4,7 +4,7 @@
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
 # generated frontend files
-code/static/
+code/dist/
 
 # User-specific files
 *.rsuser
@@ -153,6 +153,8 @@ coverage*.info
 # Visual Studio code coverage results
 *.coverage
 *.coveragexml
+
+coverage-main
 
 # NCrunch
 _NCrunch_*
@@ -406,3 +408,21 @@ FodyWeavers.xsd
 
 temp/
 .azure
+
+# Poetry build dist folder
+*.whl
+*.tar.gz
+
+# We use Poetry for dependency management, but we generate this file in azd
+# so that Azure App Service can install the dependencies
+requirements.txt
+!infra/prompt-flow/cwyd/requirements.txt
+
+# Cypress UI tests screenshots folder
+tests/integration/ui/cypress/screenshots/
+
+# Jupyter
+.ipynb_checkpoints
+
+#JetBrains IDE
+.idea/

@@ -10,6 +10,10 @@ param botAadAppClientId string
 @description('Required by Bot Framework package in your bot project')
 param botAadAppClientSecret string
 
+@secure()
+@description('Required by Bot Framework azureFunctionURL')
+param azureFunctionURL string
+
 param webAppSKU string
 
 @maxLength(42)
@@ -39,6 +43,7 @@ resource webApp 'Microsoft.Web/sites@2021-02-01' = {
     httpsOnly: true
     siteConfig: {
       alwaysOn: true
+      minTlsVersion: '1.2'
       appSettings: [
         {
           name: 'WEBSITE_RUN_FROM_PACKAGE'
@@ -59,6 +64,10 @@ resource webApp 'Microsoft.Web/sites@2021-02-01' = {
         {
           name: 'BOT_PASSWORD'
           value: botAadAppClientSecret
+        }
+        {
+          name: 'AZURE_FUNCTION_URL'
+          value: azureFunctionURL
         }
       ]
       ftpsState: 'FtpsOnly'

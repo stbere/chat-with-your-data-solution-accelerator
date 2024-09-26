@@ -1,23 +1,8 @@
 import { ConversationRequest } from "./models";
 
-export async function conversationApi(options: ConversationRequest, abortSignal: AbortSignal): Promise<Response> {
-    const response = await fetch("/api/conversation/azure_byod", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            messages: options.messages
-        }),
-        signal: abortSignal
-    });
 
-    return response;
-}
-
-
-export async function customConversationApi(options: ConversationRequest, abortSignal: AbortSignal): Promise<Response> {
-    const response = await fetch("/api/conversation/custom", {
+export async function callConversationApi(options: ConversationRequest, abortSignal: AbortSignal): Promise<Response> {
+    const response = await fetch("/api/conversation", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -29,5 +14,31 @@ export async function customConversationApi(options: ConversationRequest, abortS
         signal: abortSignal
     });
 
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(JSON.stringify(errorData.error));
+    }
+
     return response;
 }
+
+export async function getAssistantTypeApi() {
+    try {
+        const response = await fetch("/api/assistanttype", {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json"
+            },
+        });
+
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+
+      const config = await response.json(); // Parse JSON response
+      return config;
+    } catch (error) {
+      console.error('Failed to fetch configuration:', error);
+      return null; // Return null or some default value in case of error
+    }
+  }
